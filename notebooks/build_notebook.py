@@ -20,7 +20,7 @@ stored Gemma 4 E4B predictions (the model itself ran locally with llama.cpp; see
 src = glob.glob('/kaggle/input/**/tasks.jsonl', recursive=True)
 assert src, 'attach the gemma-4-developer-agent competition data'
 COMP = os.path.dirname(src[0]); print('competition data:', COMP)
-W = '/kaggle/working'
+W = '/tmp/w'  # derived per-task data stays out of the public notebook output (competition rule 4.b)
 subprocess.run(['git', 'clone', '-q', 'https://github.com/DesignMaster-Solutions/where-the-fix-lives', f'{W}/wtfl'], check=True)
 subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'rank_bm25==0.2.2'], check=True)
 DATA = f'{W}/data'; os.makedirs(f'{DATA}/repos', exist_ok=True)
@@ -55,6 +55,12 @@ import glob
 for f in sorted(glob.glob('figures/*.png')):
     print(f)"""),
     ("code", "!python -m pytest -q tests"),
+    ("code", """import shutil
+# publish only aggregate results
+for f in ('results/tables.md', 'results/summary.json'):
+    shutil.copy(f, '/kaggle/working/')
+shutil.copytree('figures', '/kaggle/working/figures', dirs_exist_ok=True)
+print(open('results/tables.md').read())"""),
 ]
 
 nb = {"cells": [], "metadata": {"kernelspec": {"name": "python3", "display_name": "Python 3", "language": "python"},
