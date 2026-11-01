@@ -1,0 +1,172 @@
+"""Tables and figures from results/per_task.jsonl (and results/llm_*.jsonl when present).
+
+Usage: python scripts/analyze.py  ->  results/tables.md, results/summary.json, figures/*.png
+"""
+import json
+from pathlib import Path
+
+import matplotlib
+import numpy as np
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+RANKERS = ["random", "bm25", "emb_knn", "ppr", "anchor+bm25", "hybrid"]
+KS = (1, 5, 10, 20)
+B = 2000
+
+
+def boot_ci(x, rng):
+    x = np.asarray(x, float)
+    if len(x) == 0:
+        return (float("nan"),) * 3
+    s = rng.choice(x, (B, len(x))).mean(1)
+    return float(x.mean()), float(np.percentile(s, 2.5)), float(np.percentile(s, 97.5))
+
+
+def paired_diff(a, b, rng):
+    d = np.asarray(a, float) - np.asarray(b, float)
+    s = rng.choice(d, (B, len(d))).mean(1)
+    return float(d.mean()), float(np.percentile(s, 2.5)), float(np.percentile(s, 97.5)), float((s <= 0).mean())
+
+
+def hit(r, k):
+    return 1.0 if r is not None and r <= k else 0.0
+
+
+def main():
+    rng = np.random.default_rng(0)
+    rows = [json.loads(l) for l in open(ROOT / "results" / "per_task.jsonl")]
+    S, md = {}, []
+    n = len(rows)
+    node_set = [r for r in rows if r["n_gold_nodes"] > 0]
+    file_set = [r for r in rows if r["n_gold_py_files"] > 0]
+
+    # ---- RQ1: structure ----
+    def frac(pred, pop):
+        v = [1.0 if pred(r) else 0.0 for r in pop]
+        return boot_ci(v, rng) + (int(sum(v)), len(v))
+    rq1 = {
+        "only_new_files": frac(lambda r: r["only_new_files"], rows),
+        "has_new_file": frac(lambda r: r["has_new_file"], rows),
+        "single_file": frac(lambda r: r["n_gold_files"] + 0 == 1 and not r["has_new_file"], rows),
+        "module_level_only": frac(lambda r: r["module_level_only"], file_set),
+        "file_anchor_any": frac(lambda r: r["file_anchor"], file_set),
+        "file_anchor_hits_gold": frac(lambda r: r["file_anchor_hits_gold"], file_set),
+        "symbol_anchor_any": frac(lambda r: r["n_anchors"] > 0, node_set),
+        "anchor_hits_gold_node": frac(lambda r: r["anchor_hits_gold"], node_set),
+        "gold_isolated_in_call_graph": frac(lambda r: r["gold_isolated"], node_set),
+        "gold_has_embedding": frac(lambda r: r["gold_has_emb"], node_set),
+    }
+    with_anchor = [r for r in node_set if r["n_anchors"] > 0]
+    dists = [r["anchor_gold_dist"] for r in with_anchor]
+    hop = {}
+    for k in (0, 1, 2, 3):
+        hop[k] = frac(lambda r, k=k: r["anchor_gold_dist"] is not None and r["anchor_gold_dist"] <= k, with_anchor)
+    rq1["anchor_gold_hops"] = hop
+    S["rq1"] = rq1
+    S["n_tasks"], S["n_node_eval"], S["n_file_eval"] = n, len(node_set), len(file_set)
+    S["median_candidates"] = float(np.median([r["n_nodes"] for r in node_set]))
+    S["median_edges"] = float(np.median([r["n_edges"] for r in node_set]))
+
+    md.append(f"# Results\n\nTasks: {n}; with a gold graph node (function-level eval): {len(node_set)}; "
+              f"with a gold existing .py file (file-level eval): {len(file_set)}.\n")
+    md.append("## RQ1 structure (mean [95% bootstrap CI], count/total)\n")
+    md.append("| quantity | value |\n|---|---|")
+    for k, v in rq1.items():
+        if k == "anchor_gold_hops":
+            for h, vv in v.items():
+                md.append(f"| gold within {h} hops of an anchor (tasks with anchors) | {vv[0]:.2f} [{vv[1]:.2f}, {vv[2]:.2f}] {vv[3]}/{vv[4]} |")
+        else:
+            md.append(f"| {k} | {v[0]:.2f} [{v[1]:.2f}, {v[2]:.2f}] {v[3]}/{v[4]} |")
+
+    # ---- RQ2: rankers ----
+    S["rq2"] = {}
+    for level, pop in (("node", node_set), ("file", file_set)):
+        md.append(f"\n## RQ2 {level}-level hit@k (mean [95% CI]), n={len(pop)}\n")
+        md.append("| ranker | " + " | ".join(f"@{k}" for k in KS) + " | MRR |\n|---|" + "---|" * (len(KS) + 1))
+        for rk in RANKERS:
+            ranks = [r[f"{level}_rank_{rk}"] for r in pop]
+            cells, entry = [], {}
+            for k in KS:
+                m, lo, hi = boot_ci([hit(x, k) for x in ranks], rng)
+                cells.append(f"{m:.3f} [{lo:.2f}, {hi:.2f}]")
+                entry[f"hit@{k}"] = (m, lo, hi)
+            mrr = boot_ci([1 / x if x else 0 for x in ranks], rng)
+            entry["mrr"] = mrr
+            cells.append(f"{mrr[0]:.3f}")
+            S["rq2"][f"{level}/{rk}"] = entry
+            md.append(f"| {rk} | " + " | ".join(cells) + " |")
+        for a, b in (("hybrid", "bm25"), ("ppr", "bm25"), ("emb_knn", "bm25"), ("hybrid", "anchor+bm25")):
+            for k in (1, 10):
+                d = paired_diff([hit(r[f"{level}_rank_{a}"], k) for r in pop],
+                                [hit(r[f"{level}_rank_{b}"], k) for r in pop], rng)
+                S["rq2"][f"{level}/diff/{a}-{b}@{k}"] = d
+                md.append(f"\npaired {a} - {b} hit@{k}: {d[0]:+.3f} [{d[1]:+.3f}, {d[2]:+.3f}], P(diff<=0)={d[3]:.3f}")
+
+    # anchored vs unanchored split
+    md.append("\n## RQ2 node hit@10 by anchoring\n\n| subset | n | bm25 | ppr | emb_knn | hybrid |\n|---|---|---|---|---|---|")
+    for name, pop in (("issue names a gold symbol/file", [r for r in node_set if r["anchor_hits_gold"]]),
+                      ("no lexical anchor on gold", [r for r in node_set if not r["anchor_hits_gold"]])):
+        vals = [np.mean([hit(r[f"node_rank_{rk}"], 10) for r in pop]) if pop else float("nan")
+                for rk in ("bm25", "ppr", "emb_knn", "hybrid")]
+        S["rq2"][f"split/{name}"] = {"n": len(pop), **dict(zip(("bm25", "ppr", "emb_knn", "hybrid"), vals))}
+        md.append(f"| {name} | {len(pop)} | " + " | ".join(f"{v:.3f}" for v in vals) + " |")
+
+    # ---- figures ----
+    fig, ax = plt.subplots(1, 2, figsize=(10, 3.6))
+    ks = [1, 2, 3, 5, 10, 20, 50]
+    for rk in RANKERS:
+        for j, (level, pop) in enumerate((("node", node_set), ("file", file_set))):
+            ax[j].plot(ks, [np.mean([hit(r[f"{level}_rank_{rk}"], k) for r in pop]) for k in ks], marker="o", ms=3, label=rk)
+    for j, t in enumerate(("function/class (graph node)", "file")):
+        ax[j].set_xscale("log"); ax[j].set_xticks(ks); ax[j].set_xticklabels(ks)
+        ax[j].set_xlabel("k"); ax[j].set_ylabel("hit@k"); ax[j].set_title(t); ax[j].grid(alpha=.3)
+    ax[1].legend(fontsize=7)
+    fig.tight_layout(); fig.savefig(ROOT / "figures" / "hit_at_k.png", dpi=160)
+
+    fig, ax = plt.subplots(figsize=(5, 3.2))
+    labels = ["0", "1", "2", "3", "4-6", ">6/none"]
+    cnt = [sum(1 for d in dists if d == 0), sum(1 for d in dists if d == 1), sum(1 for d in dists if d == 2),
+           sum(1 for d in dists if d == 3), sum(1 for d in dists if d is not None and 4 <= d <= 6),
+           sum(1 for d in dists if d is None or d > 6)]
+    S["hop_hist"] = dict(zip(labels, cnt))
+    ax.bar(labels, cnt, color="#4a6fa5")
+    ax.set_xlabel("call-graph hops from nearest issue anchor to nearest gold node")
+    ax.set_ylabel("tasks"); fig.tight_layout(); fig.savefig(ROOT / "figures" / "anchor_hops.png", dpi=160)
+
+    # ---- RQ3 (LLM) if present ----
+    llm = ROOT / "results" / "llm_localization.jsonl"
+    if llm.exists():
+        L = [json.loads(l) for l in open(llm)]
+        conds = sorted({x["condition"] for x in L})
+        ids = sorted({x["instance_id"] for x in L if all(
+            any(y["instance_id"] == x["instance_id"] and y["condition"] == c for y in L) for c in conds)})
+        md.append(f"\n## RQ3 Gemma 4 E4B localization (n={len(ids)} tasks with all conditions)\n")
+        md.append("| condition | func hit@1 | func hit@5 | file hit@1 | file hit@5 | parse ok |\n|---|---|---|---|---|---|")
+        S["rq3"] = {}
+        by = {(x["instance_id"], x["condition"]): x for x in L}
+        for c in conds:
+            e = {}
+            for m in ("func_hit1", "func_hit5", "file_hit1", "file_hit5", "parsed"):
+                e[m] = boot_ci([float(by[(i, c)][m]) for i in ids], rng)
+            S["rq3"][c] = e
+            md.append(f"| {c} | " + " | ".join(f"{e[m][0]:.3f} [{e[m][1]:.2f}, {e[m][2]:.2f}]"
+                                               for m in ("func_hit1", "func_hit5", "file_hit1", "file_hit5", "parsed")) + " |")
+        if "tree" in conds:
+            for c in conds:
+                if c == "tree":
+                    continue
+                for m in ("func_hit1", "file_hit1"):
+                    d = paired_diff([by[(i, c)][m] for i in ids], [by[(i, "tree")][m] for i in ids], rng)
+                    S["rq3"][f"diff/{c}-tree/{m}"] = d
+                    md.append(f"\npaired {c} - tree {m}: {d[0]:+.3f} [{d[1]:+.3f}, {d[2]:+.3f}], P(diff<=0)={d[3]:.3f}")
+
+    (ROOT / "results" / "tables.md").write_text("\n".join(md) + "\n")
+    (ROOT / "results" / "summary.json").write_text(json.dumps(S, indent=1))
+    print("\n".join(md))
+
+
+if __name__ == "__main__":
+    main()

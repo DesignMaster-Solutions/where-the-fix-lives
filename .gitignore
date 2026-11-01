@@ -1,0 +1,11 @@
+# Derived from Kaggle competition data: regenerate locally or in the Kaggle notebook, never publish.
+results/index/
+results/rankings/
+results/gold_labels.jsonl
+results/per_task.jsonl
+results/llm_localization.jsonl
+results/*.log
+__pycache__/
+.venv/
+*.pyc
+.ipynb_checkpoints/
