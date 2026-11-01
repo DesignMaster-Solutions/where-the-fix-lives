@@ -1,6 +1,6 @@
 {
- "id": "designmasterdms/where-the-fix-lives-reproduction",
- "title": "Where the Fix Lives - reproduction",
+ "id": "designmasterdms/where-the-fix-lives",
+ "title": "Where the Fix Lives",
  "code_file": "where-the-fix-lives.ipynb",
  "language": "python",
  "kernel_type": "notebook",

@@ -73,8 +73,8 @@ for i, (kind, text) in enumerate(cells):
     nb["cells"].append(c)
 (HERE / "where-the-fix-lives.ipynb").write_text(json.dumps(nb, indent=1))
 (HERE / "kernel-metadata.json").write_text(json.dumps({
-    "id": "designmasterdms/where-the-fix-lives-reproduction",
-    "title": "Where the Fix Lives - reproduction",
+    "id": "designmasterdms/where-the-fix-lives",
+    "title": "Where the Fix Lives",
     "code_file": "where-the-fix-lives.ipynb", "language": "python", "kernel_type": "notebook",
     "is_private": False, "enable_gpu": False, "enable_internet": True,
     "competition_sources": ["gemma-4-developer-agent"], "dataset_sources": [], "kernel_sources": [],
