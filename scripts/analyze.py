@@ -65,6 +65,8 @@ def main():
     for k in (0, 1, 2, 3):
         hop[k] = frac(lambda r, k=k: r["anchor_gold_dist"] is not None and r["anchor_gold_dist"] <= k, with_anchor)
     rq1["anchor_gold_hops"] = hop
+    hoods = np.array([r["anchor_hood_frac"] for r in with_anchor if r.get("anchor_hood_frac")])
+    S["anchor_hood_median_frac"] = np.median(hoods, 0).tolist() if len(hoods) else None
     S["rq1"] = rq1
     S["n_tasks"], S["n_node_eval"], S["n_file_eval"] = n, len(node_set), len(file_set)
     S["median_candidates"] = float(np.median([r["n_nodes"] for r in node_set]))
@@ -72,6 +74,9 @@ def main():
 
     md.append(f"# Results\n\nTasks: {n}; with a gold graph node (function-level eval): {len(node_set)}; "
               f"with a gold existing .py file (file-level eval): {len(file_set)}.\n")
+    if S.get("anchor_hood_median_frac"):
+        md.append("Median share of candidate nodes within k=0..3 call-graph hops of an anchor: "
+                  + ", ".join(f"{v:.3f}" for v in S["anchor_hood_median_frac"]) + "\n")
     md.append("## RQ1 structure (mean [95% bootstrap CI], count/total)\n")
     md.append("| quantity | value |\n|---|---|")
     for k, v in rq1.items():
@@ -105,14 +110,36 @@ def main():
                 S["rq2"][f"{level}/diff/{a}-{b}@{k}"] = d
                 md.append(f"\npaired {a} - {b} hit@{k}: {d[0]:+.3f} [{d[1]:+.3f}, {d[2]:+.3f}], P(diff<=0)={d[3]:.3f}")
 
-    # anchored vs unanchored split
-    md.append("\n## RQ2 node hit@10 by anchoring\n\n| subset | n | bm25 | ppr | emb_knn | hybrid |\n|---|---|---|---|---|---|")
-    for name, pop in (("issue names a gold symbol/file", [r for r in node_set if r["anchor_hits_gold"]]),
-                      ("no lexical anchor on gold", [r for r in node_set if not r["anchor_hits_gold"]])):
-        vals = [np.mean([hit(r[f"node_rank_{rk}"], 10) for r in pop]) if pop else float("nan")
-                for rk in ("bm25", "ppr", "emb_knn", "hybrid")]
-        S["rq2"][f"split/{name}"] = {"n": len(pop), **dict(zip(("bm25", "ppr", "emb_knn", "hybrid"), vals))}
-        md.append(f"| {name} | {len(pop)} | " + " | ".join(f"{v:.3f}" for v in vals) + " |")
+    # anchored vs unanchored split (anchor = the issue names some code; hit = it names the gold)
+    SUB = ("bm25", "anchor+bm25", "ppr", "emb_knn", "hybrid")
+    splits = (("issue names a gold symbol/file", [r for r in node_set if r["anchor_hits_gold"]]),
+              ("issue names code, but not the gold", [r for r in node_set if r["n_anchors"] and not r["anchor_hits_gold"]]),
+              ("issue names no code", [r for r in node_set if not r["n_anchors"]]))
+    for k in (1, 10):
+        md.append(f"\n## RQ2 node hit@{k} by anchoring\n\n| subset | n | " + " | ".join(SUB) + " |\n|---|---|" + "---|" * len(SUB))
+        for name, pop in splits:
+            vals = [boot_ci([hit(r[f"node_rank_{rk}"], k) for r in pop], rng) for rk in SUB]
+            S["rq2"][f"split@{k}/{name}"] = {"n": len(pop), **dict(zip(SUB, vals))}
+            md.append(f"| {name} | {len(pop)} | " + " | ".join(f"{v[0]:.3f} [{v[1]:.2f}, {v[2]:.2f}]" for v in vals) + " |")
+    for name, pop in splits:
+        for a, b in (("ppr", "bm25"), ("hybrid", "bm25"), ("hybrid", "anchor+bm25")):
+            d = paired_diff([hit(r[f"node_rank_{a}"], 10) for r in pop], [hit(r[f"node_rank_{b}"], 10) for r in pop], rng)
+            S["rq2"][f"split/{name}/diff/{a}-{b}@10"] = d
+            md.append(f"\n[{name}] paired {a} - {b} node hit@10: {d[0]:+.3f} [{d[1]:+.3f}, {d[2]:+.3f}], P(diff<=0)={d[3]:.3f}")
+
+    md.append("\n## Hybrid weight sensitivity (node-level; weights = anchor+bm25, bm25, ppr, emb)\n\n| weights | @1 | @10 |\n|---|---|---|")
+    for w in ("w1111", "w2100", "w2110", "w2101", "w4110"):
+        if f"node_rank_hyb_{w}" in node_set[0]:
+            a1 = np.mean([hit(r[f"node_rank_hyb_{w}"], 1) for r in node_set]); a10 = np.mean([hit(r[f"node_rank_hyb_{w}"], 10) for r in node_set])
+            S["rq2"][f"sens/{w}"] = (a1, a10)
+            md.append(f"| {w} | {a1:.3f} | {a10:.3f} |")
+
+    # per repository
+    md.append("\n## Per repository (node-level eval set)\n\n| repo | tasks | names gold | median nodes | bm25 @10 | hybrid @10 |\n|---|---|---|---|---|---|")
+    for repo in sorted({r["repo"] for r in node_set}):
+        pop = [r for r in node_set if r["repo"] == repo]
+        md.append(f"| {repo} | {len(pop)} | {sum(r['anchor_hits_gold'] for r in pop)} | {int(np.median([r['n_nodes'] for r in pop]))} | "
+                  f"{np.mean([hit(r['node_rank_bm25'], 10) for r in pop]):.2f} | {np.mean([hit(r['node_rank_hybrid'], 10) for r in pop]):.2f} |")
 
     # ---- figures ----
     fig, ax = plt.subplots(1, 2, figsize=(10, 3.6))
@@ -135,6 +162,16 @@ def main():
     ax.bar(labels, cnt, color="#4a6fa5")
     ax.set_xlabel("call-graph hops from nearest issue anchor to nearest gold node")
     ax.set_ylabel("tasks"); fig.tight_layout(); fig.savefig(ROOT / "figures" / "anchor_hops.png", dpi=160)
+
+    fig, ax = plt.subplots(figsize=(8, 3.4))
+    w = 0.16
+    for j, rk in enumerate(SUB):
+        vals = [np.mean([hit(r[f"node_rank_{rk}"], 10) for r in pop]) for _, pop in splits]
+        ax.bar(np.arange(len(splits)) + (j - 2) * w, vals, w, label=rk)
+    ax.set_xticks(range(len(splits)))
+    ax.set_xticklabels([f"{name}\n(n={len(pop)})" for name, pop in splits], fontsize=8)
+    ax.set_ylabel("function-level hit@10"); ax.set_ylim(0, 1); ax.legend(fontsize=7, ncol=5, loc="upper right")
+    ax.grid(axis="y", alpha=.3); fig.tight_layout(); fig.savefig(ROOT / "figures" / "regimes.png", dpi=160)
 
     # ---- RQ3 (LLM) if present ----
     llm = ROOT / "results" / "llm_localization.jsonl"

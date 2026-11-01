@@ -2,6 +2,8 @@
 
 Tasks: 129; with a gold graph node (function-level eval): 115; with a gold existing .py file (file-level eval): 128.
 
+Median share of candidate nodes within k=0..3 call-graph hops of an anchor: 0.003, 0.017, 0.040, 0.078
+
 ## RQ1 structure (mean [95% bootstrap CI], count/total)
 
 | quantity | value |
@@ -75,9 +77,55 @@ paired hybrid - anchor+bm25 hit@1: +0.039 [-0.016, +0.094], P(diff<=0)=0.103
 
 paired hybrid - anchor+bm25 hit@10: +0.023 [-0.016, +0.062], P(diff<=0)=0.158
 
+## RQ2 node hit@1 by anchoring
+
+| subset | n | bm25 | anchor+bm25 | ppr | emb_knn | hybrid |
+|---|---|---|---|---|---|---|
+| issue names a gold symbol/file | 31 | 0.258 [0.13, 0.42] | 0.677 [0.52, 0.84] | 0.355 [0.19, 0.52] | 0.355 [0.19, 0.52] | 0.645 [0.48, 0.81] |
+| issue names code, but not the gold | 24 | 0.083 [0.00, 0.21] | 0.000 [0.00, 0.00] | 0.000 [0.00, 0.00] | 0.000 [0.00, 0.00] | 0.000 [0.00, 0.00] |
+| issue names no code | 60 | 0.067 [0.02, 0.13] | 0.067 [0.02, 0.13] | 0.033 [0.00, 0.08] | 0.000 [0.00, 0.00] | 0.100 [0.03, 0.18] |
+
 ## RQ2 node hit@10 by anchoring
 
-| subset | n | bm25 | ppr | emb_knn | hybrid |
+| subset | n | bm25 | anchor+bm25 | ppr | emb_knn | hybrid |
+|---|---|---|---|---|---|---|
+| issue names a gold symbol/file | 31 | 0.774 [0.61, 0.90] | 0.968 [0.90, 1.00] | 0.871 [0.74, 0.97] | 0.484 [0.32, 0.65] | 0.935 [0.84, 1.00] |
+| issue names code, but not the gold | 24 | 0.500 [0.29, 0.71] | 0.417 [0.25, 0.62] | 0.083 [0.00, 0.21] | 0.167 [0.04, 0.33] | 0.542 [0.33, 0.75] |
+| issue names no code | 60 | 0.350 [0.23, 0.47] | 0.350 [0.23, 0.47] | 0.317 [0.20, 0.43] | 0.050 [0.00, 0.12] | 0.333 [0.22, 0.45] |
+
+[issue names a gold symbol/file] paired ppr - bm25 node hit@10: +0.097 [-0.032, +0.226], P(diff<=0)=0.113
+
+[issue names a gold symbol/file] paired hybrid - bm25 node hit@10: +0.161 [+0.065, +0.290], P(diff<=0)=0.004
+
+[issue names a gold symbol/file] paired hybrid - anchor+bm25 node hit@10: -0.032 [-0.097, +0.000], P(diff<=0)=1.000
+
+[issue names code, but not the gold] paired ppr - bm25 node hit@10: -0.417 [-0.625, -0.208], P(diff<=0)=1.000
+
+[issue names code, but not the gold] paired hybrid - bm25 node hit@10: +0.042 [-0.083, +0.167], P(diff<=0)=0.411
+
+[issue names code, but not the gold] paired hybrid - anchor+bm25 node hit@10: +0.125 [-0.042, +0.292], P(diff<=0)=0.120
+
+[issue names no code] paired ppr - bm25 node hit@10: -0.033 [-0.133, +0.050], P(diff<=0)=0.826
+
+[issue names no code] paired hybrid - bm25 node hit@10: -0.017 [-0.067, +0.033], P(diff<=0)=0.806
+
+[issue names no code] paired hybrid - anchor+bm25 node hit@10: -0.017 [-0.067, +0.033], P(diff<=0)=0.811
+
+## Hybrid weight sensitivity (node-level; weights = anchor+bm25, bm25, ppr, emb)
+
+| weights | @1 | @10 |
+|---|---|---|
+| w1111 | 0.191 | 0.522 |
+| w2100 | 0.191 | 0.530 |
+| w2110 | 0.235 | 0.539 |
+| w2101 | 0.191 | 0.522 |
+| w4110 | 0.200 | 0.513 |
+
+## Per repository (node-level eval set)
+
+| repo | tasks | names gold | median nodes | bm25 @10 | hybrid @10 |
 |---|---|---|---|---|---|
-| issue names a gold symbol/file | 31 | 0.774 | 0.871 | 0.484 | 0.935 |
-| no lexical anchor on gold | 84 | 0.393 | 0.250 | 0.083 | 0.393 |
+| Textualize/rich | 43 | 10 | 1149 | 0.51 | 0.56 |
+| encode/httpx | 1 | 1 | 596 | 1.00 | 1.00 |
+| fastapi/fastapi | 60 | 15 | 1280 | 0.40 | 0.47 |
+| psf/requests | 11 | 5 | 285 | 0.91 | 0.82 |

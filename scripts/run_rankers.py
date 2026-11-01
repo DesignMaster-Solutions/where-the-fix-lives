@@ -11,7 +11,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from wtfl.anchors import file_anchors, mentioned_identifiers, symbol_anchors  # noqa: E402
-from wtfl.rankers import RepoView, is_test_node, rank_all  # noqa: E402
+from wtfl.rankers import RepoView, is_test_node, rank_all, rrf  # noqa: E402
+
+# hybrid weight grid (anchor+bm25, bm25, ppr, emb); the paper's hybrid uses (2, 1, 1, 0.5), fixed before any result
+WEIGHTS = {"w1111": (1, 1, 1, 1), "w2100": (2, 1, 0, 0), "w2110": (2, 1, 1, 0), "w2101": (2, 1, 0, 1), "w4110": (4, 1, 1, 0.5)}
 
 ROOT = Path(__file__).resolve().parents[1]
 KS = (1, 3, 5, 10, 20, 50)
@@ -58,13 +61,15 @@ def main(data: Path):
         ranks = rank_all(view, issue, anchors)
 
         # graph distance from nearest anchor to nearest gold node (undirected calls graph)
-        dist = None
+        dist, hood = None, None
         if anchors and gold:
             src = [a for a in anchors if a in view.g]
             if src:
                 lengths = nx.multi_source_dijkstra_path_length(view.g, set(src), cutoff=6)
                 d = [lengths[g] for g in gold if g in lengths]
                 dist = min(d) if d else float("inf")
+                # share of candidate nodes within k hops of an anchor: how much a k-hop prior narrows the search
+                hood = [sum(1 for v in lengths.values() if v <= k) / len(view.nodes) for k in range(4)]
         row = {
             "instance_id": lab["instance_id"], "repo": lab["repo"],
             "n_nodes": len(view.nodes), "n_edges": view.g.number_of_edges(),
@@ -77,11 +82,14 @@ def main(data: Path):
             "n_ids": len(mentioned_identifiers(issue)),
             "file_anchor": bool(fa), "file_anchor_hits_gold": bool(fa & gold_files),
             "n_anchors": len(anchors), "anchor_hits_gold": bool(anchors & gold),
-            "anchor_gold_dist": dist,
+            "anchor_gold_dist": dist, "anchor_hood_frac": hood,
             "gold_isolated": bool(gold) and all(view.g.degree(g) == 0 for g in gold if g in view.g),
             "gold_has_emb": bool(gold) and any(g in view.emb_row for g in gold),
             "issue_chars": len(issue),
         }
+        for w, wt in WEIGHTS.items():
+            r = rrf([ranks["anchor+bm25"], ranks["bm25"], ranks["ppr"], ranks["emb_knn"]], weights=list(wt))
+            row[f"node_rank_hyb_{w}"] = first_hit(r, gold) if gold else None
         for name, r in ranks.items():
             row[f"node_rank_{name}"] = first_hit(r, gold) if gold else None
             fr = file_ranking(r, node2file)
