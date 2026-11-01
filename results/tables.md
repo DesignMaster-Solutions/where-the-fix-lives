@@ -129,3 +129,41 @@ paired hybrid - anchor+bm25 hit@10: +0.023 [-0.016, +0.062], P(diff<=0)=0.158
 | encode/httpx | 1 | 1 | 596 | 1.00 | 1.00 |
 | fastapi/fastapi | 60 | 15 | 1280 | 0.40 | 0.47 |
 | psf/requests | 11 | 5 | 285 | 0.91 | 0.82 |
+
+## RQ3 Gemma 4 E4B localization (n=115 tasks with all conditions)
+
+| condition | func hit@1 | func hit@5 | file hit@1 | file hit@5 | parse ok |
+|---|---|---|---|---|---|
+| bm25_top20 | 0.417 [0.33, 0.50] | 0.504 [0.41, 0.60] | 0.635 [0.54, 0.72] | 0.678 [0.59, 0.77] | 0.983 [0.96, 1.00] |
+| hybrid_top20 | 0.435 [0.35, 0.52] | 0.504 [0.41, 0.59] | 0.591 [0.50, 0.68] | 0.635 [0.55, 0.72] | 0.974 [0.94, 1.00] |
+| tree | 0.304 [0.22, 0.39] | 0.304 [0.23, 0.39] | 0.478 [0.39, 0.57] | 0.513 [0.42, 0.60] | 0.870 [0.80, 0.93] |
+
+paired bm25_top20 - tree func_hit1: +0.113 [+0.009, +0.217], P(diff<=0)=0.023
+
+paired bm25_top20 - tree file_hit1: +0.157 [+0.052, +0.261], P(diff<=0)=0.002
+
+paired hybrid_top20 - tree func_hit1: +0.130 [+0.035, +0.226], P(diff<=0)=0.004
+
+paired hybrid_top20 - tree file_hit1: +0.113 [+0.017, +0.209], P(diff<=0)=0.010
+| bm25_top20 prior alone | 0.130 [0.08, 0.20] | 0.409 [0.32, 0.50] | 0.313 [0.23, 0.40] | 0.609 [0.52, 0.70] | n/a |
+
+paired Gemma(bm25_top20) - prior alone func_hit1: +0.287 [+0.200, +0.374], P(diff<=0)=0.000
+
+paired Gemma(bm25_top20) - prior alone file_hit1: +0.322 [+0.226, +0.409], P(diff<=0)=0.000
+| hybrid_top20 prior alone | 0.252 [0.18, 0.33] | 0.461 [0.37, 0.56] | 0.417 [0.33, 0.51] | 0.626 [0.54, 0.71] | n/a |
+
+paired Gemma(hybrid_top20) - prior alone func_hit1: +0.183 [+0.096, +0.270], P(diff<=0)=0.000
+
+paired Gemma(hybrid_top20) - prior alone file_hit1: +0.174 [+0.087, +0.270], P(diff<=0)=0.000
+
+paired hybrid_top20 - bm25_top20 func_hit1: +0.017 [-0.052, +0.087], P(diff<=0)=0.353
+
+Gemma+bm25_top20 func_hit1: gold in list 45/64, gold not in list 3/51
+
+Gemma+hybrid_top20 func_hit1: gold in list 49/72, gold not in list 1/43
+
+| regime (func hit@1) | n | tree | bm25_top20 | hybrid_top20 | bm25_top20 prior alone | hybrid_top20 prior alone |
+|---|---|---|---|---|---|---|
+| issue names a gold node | 31 | 0.548 | 0.774 | 0.903 | 0.290 | 0.645 |
+| issue names other code | 24 | 0.083 | 0.250 | 0.292 | 0.083 | 0.125 |
+| issue names no code | 60 | 0.267 | 0.300 | 0.250 | 0.067 | 0.100 |

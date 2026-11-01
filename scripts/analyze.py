@@ -200,6 +200,64 @@ def main():
                     S["rq3"][f"diff/{c}-tree/{m}"] = d
                     md.append(f"\npaired {c} - tree {m}: {d[0]:+.3f} [{d[1]:+.3f}, {d[2]:+.3f}], P(diff<=0)={d[3]:.3f}")
 
+        # retrieval prior alone, scored by the same function as the model (candidate #1 and top-5 of the 20 shown)
+        import sys
+        sys.path.insert(0, str(ROOT))
+        from scripts.llm_localize import candidate_lines, score
+        from wtfl.rankers import is_test_node
+        labs = {l["instance_id"]: l for l in map(json.loads, open(ROOT / "results" / "gold_labels.jsonl"))}
+        for name in ("bm25", "hybrid"):
+            c = f"{name}_top20 prior alone"
+            for i in ids:
+                lab = labs[i]
+                idx = json.loads((ROOT / "results" / "index" / f"{lab['graph_key']}.json").read_text())
+                rk = json.loads((ROOT / "results" / "rankings" / f"{i}.json").read_text())
+                gp = sorted({(f["path"], s["qualname"]) for f in lab["files"] for s in f["symbols"]
+                             if s["node"] and not is_test_node(s["node"])})
+                gf = {f["path"] for f in lab["files"] if not f["is_new"]}
+                by[(i, c)] = {**score(candidate_lines(rk[name], idx["node2loc"], idx["file_defs"]), gp, gf), "parsed": True}
+            e = {m: boot_ci([float(by[(i, c)][m]) for i in ids], rng) for m in ("func_hit1", "func_hit5", "file_hit1", "file_hit5")}
+            S["rq3"][c] = e
+            md.append(f"| {c} | " + " | ".join(f"{e[m][0]:.3f} [{e[m][1]:.2f}, {e[m][2]:.2f}]"
+                                               for m in ("func_hit1", "func_hit5", "file_hit1", "file_hit5")) + " | n/a |")
+            for m in ("func_hit1", "file_hit1"):
+                d = paired_diff([by[(i, f"{name}_top20")][m] for i in ids], [by[(i, c)][m] for i in ids], rng)
+                S["rq3"][f"diff/{name}_top20-prior_alone/{m}"] = d
+                md.append(f"\npaired Gemma({name}_top20) - prior alone {m}: {d[0]:+.3f} [{d[1]:+.3f}, {d[2]:+.3f}], P(diff<=0)={d[3]:.3f}")
+        d = paired_diff([by[(i, "hybrid_top20")]["func_hit1"] for i in ids], [by[(i, "bm25_top20")]["func_hit1"] for i in ids], rng)
+        S["rq3"]["diff/hybrid_top20-bm25_top20/func_hit1"] = d
+        md.append(f"\npaired hybrid_top20 - bm25_top20 func_hit1: {d[0]:+.3f} [{d[1]:+.3f}, {d[2]:+.3f}], P(diff<=0)={d[3]:.3f}")
+        P = {r["instance_id"]: r for r in rows}
+        # recall bound: model hit@1 with vs without the gold among the 20 candidates shown
+        for name in ("bm25", "hybrid"):
+            inc = [i for i in ids if P[i][f"node_rank_{name}"] is not None and P[i][f"node_rank_{name}"] <= 20]
+            out = [i for i in ids if i not in inc]
+            h_in = int(sum(by[(i, f"{name}_top20")]["func_hit1"] for i in inc))
+            h_out = int(sum(by[(i, f"{name}_top20")]["func_hit1"] for i in out))
+            S["rq3"][f"recall/{name}"] = {"gold_in_top20": [h_in, len(inc)], "gold_not_in_top20": [h_out, len(out)]}
+            md.append(f"\nGemma+{name}_top20 func_hit1: gold in list {h_in}/{len(inc)}, gold not in list {h_out}/{len(out)}")
+        # by regime (same split as RQ2)
+        reg = {i: "issue names a gold node" if P[i]["anchor_hits_gold"] else
+               ("issue names other code" if P[i]["n_anchors"] else "issue names no code") for i in ids}
+        cols = ["tree", "bm25_top20", "hybrid_top20", "bm25_top20 prior alone", "hybrid_top20 prior alone"]
+        md.append("\n| regime (func hit@1) | n | " + " | ".join(cols) + " |\n|---|---|" + "---|" * len(cols))
+        S["rq3"]["regimes"] = {}
+        for g in ("issue names a gold node", "issue names other code", "issue names no code"):
+            gi = [i for i in ids if reg[i] == g]
+            v = {c: float(np.mean([by[(i, c)]["func_hit1"] for i in gi])) for c in cols}
+            S["rq3"]["regimes"][g] = {"n": len(gi), **v}
+            md.append(f"| {g} | {len(gi)} | " + " | ".join(f"{v[c]:.3f}" for c in cols) + " |")
+        fig, ax = plt.subplots(figsize=(7, 3.4))
+        cs = ["tree", "bm25_top20 prior alone", "bm25_top20", "hybrid_top20 prior alone", "hybrid_top20"]
+        lab_ = ["Gemma\nfile tree", "BM25 #1\n(no LLM)", "Gemma\n+BM25 top-20", "hybrid #1\n(no LLM)", "Gemma\n+hybrid top-20"]
+        mu = [S["rq3"][c]["func_hit1"] for c in cs]
+        ax.bar(range(len(cs)), [m[0] for m in mu], yerr=[[m[0] - m[1] for m in mu], [m[2] - m[0] for m in mu]],
+               color=["#888", "#9ab", "#357", "#ca9", "#a53"], capsize=3)
+        ax.set_xticks(range(len(cs))); ax.set_xticklabels(lab_, fontsize=8)
+        ax.set_ylabel("function-level hit@1"); ax.set_ylim(0, .7); ax.grid(axis="y", alpha=.3)
+        ax.set_title(f"Gemma 4 E4B localization, n={len(ids)} tasks (95% bootstrap CI)", fontsize=9)
+        fig.tight_layout(); fig.savefig(ROOT / "figures" / "rq3.png", dpi=160)
+
     (ROOT / "results" / "tables.md").write_text("\n".join(md) + "\n")
     (ROOT / "results" / "summary.json").write_text(json.dumps(S, indent=1))
     print("\n".join(md))
