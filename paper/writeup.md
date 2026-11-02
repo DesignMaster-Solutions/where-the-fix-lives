@@ -13,8 +13,9 @@ at each base commit, giving function-level labels for 115 tasks, and ask where t
 relative to what the issue says. Only 27% of issues name a gold function or file; 52% name no
 code. Among training-free rankers, a rank-fusion hybrid lifts function hit@1 from 0.12 (BM25) to
 0.23 (+0.10, 95% CI [+0.03, +0.18]), but the gain comes from lexical anchors: graph propagation
-helps only when the issue already names the gold, hurts when it names other code (hit@10 0.08 vs
-0.50), and nothing passes 0.35 hit@10 when it names no code. Running Gemma 4 E4B locally, we find
+never significantly beats BM25 (at best +0.10 hit@10, interval crossing zero, when the issue names
+the gold), hurts when it names other code (hit@10 0.08 vs 0.50), and nothing passes 0.35 hit@10
+when it names no code. Running Gemma 4 E4B locally, we find
 a strong re-ranker but a weak searcher: from the file list it hits the gold function at rank 1 in
 0.30 of tasks, from BM25's top 20 in 0.42 (+0.11 [+0.01, +0.22]), against 0.13 for BM25's own
 first candidate. Behind the model, the better hybrid prior adds nothing measurable. Code, model
@@ -32,10 +33,9 @@ to test, is that the graph lets an agent walk from what the issue mentions to wh
 We find that what decides whether localization is easy is not "how far is the fix in the graph?"
 but "does the issue name the fix?". Our contributions:
 
-1. **Labels and a pipeline.** The benchmark's graph nodes are dotted symbol paths with code but
-   no file or line information. We recover file and line spans for 95% of all graph nodes by
-   parsing the upstream source at each base commit, and map every touched line of every gold patch
-   to its innermost enclosing function or class (Section 2).
+1. **Labels and a pipeline.** Graph nodes carry no file or line information; we recover spans for
+   95% of them from the upstream source at each base commit and map every touched line of every
+   gold patch to its innermost enclosing function or class (Section 2).
 2. **A structural census (RQ1)** of where the fix lives relative to the issue's lexical anchors
    and the call graph.
 3. **A controlled comparison of training-free rankers (RQ2)** with bootstrap confidence intervals
@@ -93,9 +93,8 @@ traceback frame anchors every node of the matching file.
 | gold within 1 / 2 / 3 call hops of an anchor (n = 55 anchored) | 0.62 / 0.69 / 0.82 |
 
 The tasks split into three regimes: the issue names a gold symbol or file (31 tasks), other code
-only (24), or no code (60). When an issue does
-name code, the gold is usually close in the call graph: 82% of anchored tasks have a gold node
-within three hops. That looks promising for graph search, but the median three-hop neighbourhood
+only (24), or no code (60). When an issue names
+code, 82% of the time a gold node lies within three call hops. That looks promising for graph search, but the median three-hop neighbourhood
 of the anchors already holds 7.8% of all candidates, about 90 functions in a median-sized
 repository, so "within three hops" is not by itself a useful filter.
 
@@ -109,8 +108,8 @@ the provided artifacts; nothing is trained or tuned on the benchmark.
 * **Anchor+BM25**: anchored nodes first, ordered by BM25, then the rest of the BM25 ranking.
 * **PPR**: personalized PageRank (α = 0.85) on the undirected call graph, restarting uniformly on
   up to 20 anchors (BM25-ordered); with no anchors, on the BM25 top-5 (pseudo-relevance feedback).
-* **Embedding kNN**: cosine similarity to the mean embedding of the same seeds. This is the best
-  the provided embeddings allow, since the issue itself cannot be embedded.
+* **Embedding kNN**: cosine similarity to the mean embedding of the same seeds, the best the
+  provided embeddings allow since the issue itself cannot be embedded.
 * **Hybrid**: reciprocal rank fusion (k = 60) of anchor+BM25, BM25, PPR and kNN with weights
   2, 1, 1, 0.5, fixed before any result was computed.
 
@@ -128,11 +127,11 @@ tasks (2,000 resamples); differences are paired bootstraps.
 | hybrid | **0.23** [0.15, 0.31] | **0.54** [0.45, 0.63] | **0.34** | **0.41** | **0.82** |
 
 The hybrid beats BM25 at hit@1 for functions (+0.10 [+0.03, +0.18]) and files (+0.09 [+0.02,
-+0.16]); at hit@10 the gain shrinks to +0.04 and its interval touches zero. PPR alone is no better
++0.16]); at hit@10 the gain shrinks to +0.04 and both intervals include zero. PPR alone is no better
 than BM25, and embedding kNN is clearly worse (hit@10 −0.30 [−0.41, −0.21]). Against anchor+BM25,
 the hybrid's advantage is +0.01 at both cut-offs, with intervals centred on zero. Varying the
 fusion weights (five settings, including dropping PPR and kNN) moves function hit@1 between 0.19
-and 0.24 and hit@10 between 0.51 and 0.54, so the conclusion does not hinge on the weights.
+and 0.235 and hit@10 between 0.51 and 0.54, so the conclusion does not hinge on the weights.
 
 **The regime explains the averages** (function-level hit@10):
 
@@ -146,10 +145,10 @@ and 0.24 and hit@10 between 0.51 and 0.54, so the conclusion does not hinge on t
 
 When the issue names the gold, putting anchors first is nearly sufficient: hit@1 rises from
 0.26 to 0.68, and hit@10 to 0.97. When it names other code, a graph walk from those anchors is
-actively harmful: PPR loses 0.42 [0.21, 0.63] of hit@10 against plain BM25, because the restart
+actively harmful: PPR loses 0.42 [0.21, 0.63] of hit@10 against plain BM25, presumably because the restart
 mass concentrates around the wrong symbols and their high-degree neighbours. The hybrid survives
-this regime only because BM25 is still in the fusion. When the issue names no code, all methods
-sit near 0.35 and graph or embedding signals add nothing.
+this regime only because BM25 is still in the fusion. When the issue names no code, every method
+except kNN (0.05) sits near 0.35 and graph or embedding signals add nothing.
 
 **Takeaway for tool design.** The cheapest reliable first step is lexical: resolve the issue's
 identifiers against node names and read those first. Call `get_code_neighbors` from a node
@@ -192,10 +191,10 @@ Gemma re-ranking the 20 candidates beats simply taking the prior's first one by 
 +0.37] for BM25 and +0.18 [+0.10, +0.27] for the hybrid. Candidate prompts are also far shorter
 (median 0.5k tokens against 9.7k).
 
-**The better prior stops mattering.** Alone, the hybrid is twice as good as BM25 at rank 1 (0.25
+**The better prior stops mattering.** Alone, the hybrid is nearly twice as good as BM25 at rank 1 (0.25
 vs 0.13). Behind Gemma the two are indistinguishable (0.43 vs 0.42, paired +0.02 [−0.05, +0.09]):
-the model recovers most of what the anchors and the graph contributed, because it reads the same
-identifiers in the issue. What still bounds it is recall: when the gold is not among the 20
+the model recovers most of what the anchors and the graph contributed, plausibly by reading the
+same identifiers in the issue (a mechanism we did not test). What still bounds it is recall: when the gold is not among the 20
 candidates (51 tasks for BM25, 43 for the hybrid) the model almost never finds it (3 and 1 hits),
 while with the gold in the list it picks it first 70% (BM25) and 68% (hybrid) of the time.
 
@@ -234,8 +233,8 @@ the comparisons inside Section 5 are like for like.
 
 SWE-bench (Jimenez et al., 2024) established repository-level issue resolution as a benchmark,
 and SWE-agent (Yang et al., 2024) showed that the agent-computer interface, including search
-tools, matters as much as the model. Agentless (Xia et al., 2024) made localization an explicit,
-hierarchical first stage (file, then class or function, then lines) and showed that a simple
+tools, matters as much as the model. Agentless (Xia et al., 2024) made localization an explicit
+hierarchical first stage (file, function, lines) and showed that a simple
 pipeline is competitive with agents. Graph-based navigation has been proposed repeatedly:
 RepoGraph (Ouyang et al., 2025) adds a line-level repository graph as a plug-in for agents and
 pipelines, and LocAgent (Chen et al., 2025) builds a heterogeneous code graph that an LLM agent
