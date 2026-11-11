@@ -5,6 +5,7 @@ training-free localization prior for small local models.
 
 Author: Alan De Bortolo, Design Master Solutions LLC. License: Apache-2.0.
 Submitted to the Kaggle "Google - The Gemma 4 Developer Agent Paper Track" (2026).
+Paper: [PDF](paper/where-the-fix-lives.pdf) (8 pages) · [Markdown source](paper/writeup.md).
 
 ## What is here
 
